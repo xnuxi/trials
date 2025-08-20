@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Informed Consent – Trials Explorer</title>
+<link rel="stylesheet" href="assets/styles.css"/>
+<script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0"></script>
+</head><body>
+<div class="container">
+  <h1>Informed Consent – Trials Explorer</h1>
+  <input id="q" type="search" placeholder="Search by NCT, title, author, year… (client-side, instant)"/>
+  <div id="results"></div>
+</div>
+<script>
+const fmt = (s)=> (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;")
+const card = (r)=> `
+  <div class="card">
+    <div><a href="studies/${r.nct}.html"><strong>${fmt(r.nct)}</strong></a> – ${fmt(r.title)}</div>
+    <div class="meta">
+      ${(r.year?`<span class="badge">${r.year}</span>`:"")}
+      ${(r.authors && r.authors.length?`<span class="badge">${fmt(r.authors[0])}</span>`:"")}
+      ${(r.registry_url?`<a class="badge" href="${r.registry_url}" target="_blank" rel="noopener">Registry</a>`:"")}
+    </div>
+  </div>`
+
+let data = [];
+async function init() {
+  data = await (await fetch('assets/studies.json')).json();
+  render(data);
+  const fuse = new Fuse(data, {
+    keys: ['nct','title','authors','year'],
+    threshold: 0.35,
+    ignoreLocation: true
+  });
+  document.getElementById('q').addEventListener('input', (e) => {
+    const v = e.target.value.trim();
+    if(!v) return render(data);
+    render(fuse.search(v).map(x=>x.item));
+  });
+}
+function render(items) {
+  const el = document.getElementById('results');
+  el.innerHTML = items.map(card).join('') || '<div class="meta">No matches.</div>';
+}
+init();
+</script>
+</body></html>

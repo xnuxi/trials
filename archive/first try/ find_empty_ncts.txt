@@ -1,0 +1,20 @@
+# === save as: find_empty_ncts.py ===
+import os
+
+ROOT = "/Users/sg/Desktop/nih/informed consent/downloads"
+empty = []
+
+for folder in os.listdir(ROOT):
+    path = os.path.join(ROOT, folder)
+    if os.path.isdir(path):
+        files = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
+        if len(files) == 0:
+            empty.append(folder)
+
+# Save out list
+with open("empty_ncts.txt", "w") as f:
+    for nct in empty:
+        f.write(nct + "\n")
+
+print(f"Found {len(empty)} empty folders")
+print("Empty NCTs saved to empty_ncts.txt")

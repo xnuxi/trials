@@ -1,0 +1,102 @@
+import os
+import pandas as pd
+import requests
+import re
+
+# ============== CONFIG ==============
+CSV_FILE = "ctg-studies (informed consent).csv"
+RIS_FILE = "ctg-studies (informed consent).ris"
+DOWNLOAD_DIR = "/Users/sg/Desktop/nih/informed consent/downloads"
+DOCS_COLUMN = "Study Documents"
+NCT_COLUMN  = "NCT Number"
+EMPTY_LIST  = "empty_ncts.txt"
+# ====================================
+
+def safe(s: str): return re.sub(r'[^a-zA-Z0-9_-]+','_',s)[:50]
+
+def normalize(x: str):
+    """Convert values like NCT125 → NCT00000125."""
+    x = str(x).strip().upper().replace("NCT","")
+    return "NCT" + x.zfill(8)
+
+# Load allow-list (of empty folders)
+with open(EMPTY_LIST) as f:
+    allow_raw = set([line.strip() for line in f if line.strip()])
+allow_norm = set(normalize(x) for x in allow_raw)
+print(f"Loaded {len(allow_norm)} empty NCTs")
+
+# Load RIS metadata
+meta = {}
+with open(RIS_FILE, encoding='utf8', errors='ignore') as fh:
+    rec = {}
+    for ln in fh:
+        tag, val = ln[:2].strip(), ln[6:].strip()
+        if not tag: continue
+        if tag=='TY' and rec:
+            if 'ID' in rec:
+                mid = normalize(rec['ID'])
+                meta[mid] = {
+                    'author': rec.get('AU','').split(',')[0],
+                    'year': rec.get('PY',''),
+                    'title': rec.get('TI','')
+                }
+            rec = {}
+        rec[tag] = val
+    if 'ID' in rec:
+        mid = normalize(rec['ID'])
+        meta[mid] = {
+            'author': rec.get('AU','').split(',')[0],
+            'year': rec.get('PY',''),
+            'title': rec.get('TI','')
+        }
+
+# Download helper with DEBUG
+def download(url, outpath):
+    try:
+        print("      fetching:", url)
+        r = requests.get(url, timeout=60)
+        r.raise_for_status()
+        with open(outpath, "wb") as fh:
+            fh.write(r.content)
+        print("   ✔", os.path.basename(outpath))
+    except Exception as e:
+        print("   ✘", url, "–", e)
+
+# Read CSV
+df = pd.read_csv(CSV_FILE)
+
+print("[*] Starting redownload loop...")
+for _, row in df.iterrows():
+    nct_raw = row[NCT_COLUMN]
+    nct = normalize(nct_raw)
+    if nct not in allow_norm:
+        continue  # skip those not in empty-list
+
+    folder = os.path.join(DOWNLOAD_DIR, nct)
+    os.makedirs(folder, exist_ok=True)
+
+    # Metadata:
+    m = meta.get(nct,{})
+    author = safe(m.get("author","") or "NA")
+    year   = safe(m.get("year","") or "NA")
+    title  = safe(m.get("title","") or "NA")
+
+    docs = str(row.get(DOCS_COLUMN,"")).split('|')
+    print(f"[{nct}] retrying {len(docs)} docs")
+    for d in docs:
+        d = d.strip()
+        if not d: continue
+        try:
+            typ, url  = d.split(',',1)
+            typ = safe(typ.strip())
+            url = url.strip()
+        except ValueError:
+            continue
+        if not url.lower().startswith("http"):
+            continue
+
+        fname = f"{author}{year}_{typ}_{title}.pdf"
+        fpath = os.path.join(folder, fname)
+        download(url, fpath)
+
+print("DONE.")

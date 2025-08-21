@@ -8,7 +8,7 @@
 <div class="container">
   <h1>Informed Consent – Trials Explorer</h1>
   <input id="q" type="search" placeholder="Search by NCT, title, author, year…"/>
-  <div class="small" style="margin:6px 0 12px 0;">Tip: click a result to open per-study page (with PDF preview).</div>
+  <div class="small" style="margin:6px 0 12px 0;">Tip: click a result to open per-study page (with PDF previews).</div>
   <div id="results"></div>
 </div>
 <script>
@@ -23,7 +23,6 @@ const card=(r)=> `
       ${r.registry_url?`<a class="badge" href="${r.registry_url}" target="_blank" rel="noopener">Registry</a>`:""}
     </div>
   </div>`;
-
 let DATA=[];
 async function init(){
   DATA = await (await fetch('assets/studies.json')).json();

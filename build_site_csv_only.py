@@ -3,6 +3,7 @@ import os, re, json, shutil
 import pandas as pd
 from pathlib import Path
 from html import escape
+from urllib.parse import quote
 
 # ===== CONFIG =====
 CSV_FILE = "ctg-studies (informed consent).csv"
@@ -24,8 +25,10 @@ def parse_ris(path: str):
     rec = {}
     with open(path, encoding="utf-8", errors="ignore") as fh:
         for ln in fh:
-            tag, val = ln[:2].strip(), ln[6:].strip()
-            if not tag: continue
+            tag = ln[:2].strip()
+            val = ln[6:].strip()
+            if not tag:
+                continue
             if tag == "TY" and rec:
                 if "ID" in rec:
                     nid = normalize_nct(rec["ID"])
@@ -48,7 +51,7 @@ def parse_ris(path: str):
 def extract_pairs(cell: str):
     """
     Pull (label, url) pairs from CSV 'Study Documents' text.
-    Handles 'label, https://...pdf' and '... | https://...pdf' formats.
+    Handles 'label, https://...pdf' and '|'-separated lists.
     """
     out = []
     if not cell or str(cell).strip().lower() in ("nan","none"):
@@ -65,7 +68,7 @@ def extract_pairs(cell: str):
             if "," in p:
                 lab, rest = p.split(",",1)
                 if rest.strip().lower().startswith("http"):
-                    out.append((lab.strip(), rest.strip()))
+                    out.append((lab.strip() or "Document", rest.strip()))
     return out
 
 def main():
@@ -78,9 +81,6 @@ def main():
     for _, r in df.iterrows():
         nct = normalize_nct(r.get("NCT Number",""))
         csv_docs = extract_pairs(r.get("Study Documents",""))
-        if not csv_docs:
-            # Still include the study so it appears in search
-            csv_docs = []
         studies.append({
             "nct": nct,
             "title": ris.get(nct, {}).get("title") or r.get("Study Title", ""),
@@ -90,14 +90,16 @@ def main():
             "csv_docs": [{"label": d[0], "url": d[1]} for d in csv_docs],
         })
 
-    # Ensure site structure
+    # Ensure site structure (fresh build)
     site = Path(SITE_DIR)
     if site.exists():
         shutil.rmtree(site)
     (site / "studies").mkdir(parents=True, exist_ok=True)
     (site / "assets").mkdir(parents=True, exist_ok=True)
+    # nojekyll so GH Pages serves assets as-is
+    (site / ".nojekyll").write_text("", encoding="utf-8")
 
-    # Write client-side search index
+    # Client-side search index
     index = [{
         "nct": s["nct"],
         "title": s["title"],
@@ -126,6 +128,7 @@ input[type=search]{width:100%;padding:12px 14px;border-radius:12px;border:1px so
 .list{list-style:none;padding:0;margin:0}
 .list li{margin:6px 0}
 .small{font-size:12px;color:#9fb0ff}
+.meta strong{font-size:15px;color:#cfe0ff}
 """, encoding="utf-8")
 
     # Index page with Fuse.js search
@@ -139,7 +142,7 @@ input[type=search]{width:100%;padding:12px 14px;border-radius:12px;border:1px so
 <div class="container">
   <h1>{escape(TITLE)}</h1>
   <input id="q" type="search" placeholder="Search by NCT, title, author, year…"/>
-  <div class="small" style="margin:6px 0 12px 0;">Tip: click a result to open per-study page (with PDF preview).</div>
+  <div class="small" style="margin:6px 0 12px 0;">Tip: click a result to open per-study page (with PDF previews).</div>
   <div id="results"></div>
 </div>
 <script>
@@ -154,7 +157,6 @@ const card=(r)=> `
       ${{r.registry_url?`<a class="badge" href="${{r.registry_url}}" target="_blank" rel="noopener">Registry</a>`:""}}
     </div>
   </div>`;
-
 let DATA=[];
 async function init(){{
   DATA = await (await fetch('assets/studies.json')).json();
@@ -179,7 +181,7 @@ init();
 </body></html>
 """, encoding="utf-8")
 
-    # Per-study pages (CSV docs only + pdf.js preview of first doc)
+    # Per-study pages (CSV docs + multi-PDF previews)
     tmpl = """<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -219,15 +221,55 @@ init();
         # CSV-doc links (external URLs)
         csv_items = []
         for d in s["csv_docs"]:
-            lab = escape(d["label"] or "Document")
-            url = escape(d["url"])
+            lab = escape(d.get("label") or "Document")
+            url = escape(d.get("url") or "")
             csv_items.append(f'<li>📄 <a href="{url}" target="_blank" rel="noopener">{lab}</a></li>')
         csv_html = "\n".join(csv_items) if csv_items else "<li>No CSV-linked docs.</li>"
 
-        # Preview first doc via pdf.js (if any)
+        # Build ALL previews with numbered headers + jump nav
         if s["csv_docs"]:
-            first = s["csv_docs"][0]["url"]
-            preview_html = f'<iframe class="pdf-iframe" src="{PDFJS_VIEWER}{escape(first)}"></iframe>'
+            total = len(s["csv_docs"])
+            nav = []
+            blocks = []
+
+            def label_for(d, idx):
+                lbl = (d.get("label") or "").strip()
+                if not lbl:
+                    try:
+                        fname = os.path.basename(d.get("url") or "")
+                        return fname or f"Document {idx}"
+                    except Exception:
+                        return f"Document {idx}"
+                return lbl
+
+            for idx, d in enumerate(s["csv_docs"], start=1):
+                label = escape(label_for(d, idx))
+                raw_url = d.get("url") or ""
+                enc = quote(raw_url, safe="")
+                anchor = f"doc{idx}"
+
+                nav.append(f'<a class="badge" href="#{anchor}">{idx}</a>')
+                blocks.append(f"""
+                <div id="{anchor}" style="margin:16px 0;">
+                  <div class="meta"><strong>Document {idx} of {total} — {label}</strong></div>
+                  <div class="small" style="margin:4px 0 8px 0;">
+                    Source: <a href="{escape(raw_url)}" target="_blank" rel="noopener">{escape(raw_url)}</a>
+                  </div>
+                  <iframe class="pdf-iframe"
+                          src="{PDFJS_VIEWER}{enc}"
+                          loading="lazy"
+                          referrerpolicy="no-referrer"
+                          title="Preview of {label} (Document {idx} of {total})"></iframe>
+                  <div class="small" style="margin-top:6px;">
+                    If the preview is blocked by the source, use the link above to open in a new tab.
+                  </div>
+                </div>
+                """)
+
+            preview_html = (
+                f'<div class="small" style="margin-bottom:8px;">Jump to: {" ".join(nav)}</div>'
+                + "\n".join(blocks)
+            )
         else:
             preview_html = '<div class="meta">No document to preview.</div>'
 

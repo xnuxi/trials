@@ -196,7 +196,7 @@ init();
   </div>
 
   <div class="card">
-    <h3>Documents (from CSV)</h3>
+    <h3>Study Documents</h3>
     <ul class="list">
       {csv_docs}
     </ul>
